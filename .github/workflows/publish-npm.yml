@@ -32,46 +32,22 @@ jobs:
         run: |
           git clone https://x-access-token:${AGENTSKILL_PAT}@github.com/agent-skill-os/agent-skill-os-npm.git /tmp/agent-skill-os-npm
 
-      - name: Sync skills and prepare npm package
+      - name: Sync skills and bump patch version
         working-directory: /tmp/agent-skill-os-npm
         run: |
-          mkdir -p skills
           rsync -av --delete /tmp/clean-skills/ skills/
-
-          if [ ! -f package.json ]; then
-            cat > package.json <<'JSON'
-          {
-            "name": "agent-skill-os-npm",
-            "version": "0.0.0",
-            "description": "Public AgentSkill OS skills registry package",
-            "license": "MIT",
-            "files": [
-              "skills/**/*",
-              "README.md"
-            ]
-          }
-          JSON
-          fi
-
-          if [ ! -f README.md ]; then
-            cat > README.md <<'EOF'
-          # agent-skill-os-npm
-
-          Public npm package distribution for AgentSkill OS skills.
-          EOF
-          fi
 
           npm version patch --no-git-tag-version
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add skills package.json README.md
+          git add skills package.json package-lock.json
           if git diff --cached --quiet; then
-            echo "No changes detected after sync/version bump; skipping push."
+            echo "No changes detected after sync/version bump; skipping commit."
           else
             git commit -m "chore(release): sync skills and bump patch version"
-            git push origin HEAD:main
+            git push origin HEAD
           fi
 
       - name: Publish package to npm
