@@ -1,0 +1,58 @@
+name: Publish Skills to NPM
+
+on:
+  push:
+    branches:
+      - publish-npm
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Build clean skills bundle (public files only)
+        run: |
+          rm -rf /tmp/clean-skills
+          mkdir -p /tmp/clean-skills
+          rsync -av --delete \
+            --include='*/' \
+            --include='SKILL.md' \
+            --exclude='*' \
+            skills/ /tmp/clean-skills/
+
+      - name: Clone npm repository
+        env:
+          AGENTSKILL_PAT: ${{ secrets.AGENTSKILL_PAT }}
+        run: |
+          git clone https://x-access-token:${AGENTSKILL_PAT}@github.com/agent-skill-os/agent-skill-os-npm.git /tmp/agent-skill-os-npm
+
+      - name: Sync skills and bump patch version
+        working-directory: /tmp/agent-skill-os-npm
+        run: |
+          rsync -av --delete /tmp/clean-skills/ skills/
+
+          npm version patch --no-git-tag-version
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add skills package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No changes detected after sync/version bump; skipping commit."
+          else
+            git commit -m "chore(release): sync skills and bump patch version"
+            git push origin HEAD
+          fi
+
+      - name: Publish package to npm
+        working-directory: /tmp/agent-skill-os-npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --access public
