@@ -1,0 +1,87 @@
+name: Publish Skills to NPM
+
+on:
+  push:
+    branches:
+      - publish-npm
+  workflow_dispatch:
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        run: |
+          test -n "${{ secrets.AGENTSKILL_PAT }}" || (echo "AGENTSKILL_PAT is required" && exit 1)
+          test -n "${{ secrets.NPM_TOKEN }}" || (echo "NPM_TOKEN is required" && exit 1)
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Build clean skills bundle (public files only)
+        run: |
+          rm -rf /tmp/clean-skills
+          mkdir -p /tmp/clean-skills
+          rsync -av --delete \
+            --include='*/' \
+            --include='SKILL.md' \
+            --exclude='*' \
+            skills/ /tmp/clean-skills/
+
+      - name: Clone npm repository
+        env:
+          AGENTSKILL_PAT: ${{ secrets.AGENTSKILL_PAT }}
+        run: |
+          git clone https://x-access-token:${AGENTSKILL_PAT}@github.com/agent-skill-os/agent-skill-os-npm.git /tmp/agent-skill-os-npm
+
+      - name: Sync skills and prepare npm package
+        working-directory: /tmp/agent-skill-os-npm
+        run: |
+          TARGET_BRANCH=$(git ls-remote --symref origin HEAD | awk '/^ref:/ {sub("refs/heads/", "", $2); print $2}')
+          if [ -z "$TARGET_BRANCH" ]; then
+            TARGET_BRANCH="main"
+          fi
+          git checkout -B "$TARGET_BRANCH"
+
+          mkdir -p skills
+          rsync -av --delete /tmp/clean-skills/ skills/
+
+          if [ ! -f package.json ]; then
+            node -e 'const fs=require("fs"); fs.writeFileSync("package.json", JSON.stringify({name:"agent-skill-os-npm",version:"0.0.0",description:"Public AgentSkill OS skills registry package",license:"MIT",files:["skills/**/*","README.md"]}, null, 2)+"\\n");'
+          fi
+
+          if [ ! -f README.md ]; then
+            printf '%s\n\n%s\n' '# agent-skill-os-npm' 'Public npm package distribution for AgentSkill OS skills.' > README.md
+          fi
+
+          npm version patch --no-git-tag-version
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add skills package.json README.md
+          if git diff --cached --quiet; then
+            echo "No changes detected after sync/version bump; skipping push."
+          else
+            git commit -m "chore(release): sync skills and bump patch version"
+            git push origin HEAD:"$TARGET_BRANCH"
+          fi
+
+      - name: Publish package to npm
+        working-directory: /tmp/agent-skill-os-npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
